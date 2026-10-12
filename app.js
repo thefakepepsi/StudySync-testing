@@ -284,15 +284,280 @@
 
   /* ---------- Auth ---------- */
   var logging = false;
-  $('#loginBtn').addEventListener('click', function () {
-    if (logging) return;
-    logging = true;
-    var b = $('#loginBtn'); b.disabled = true; $('#loginLabel').textContent = t('logging_in');
-    setTimeout(function () {
-      logging = false; b.disabled = false; $('#loginLabel').textContent = t('login');
-      openM($('#ovTerms'), b);
-    }, 900);
+  let serverUrl = 'http://192.168.1.236:3000/api';
+let currentUser = null;
+let appData = { organizations: [], classes: [], courses: [], users: [] };
+
+async function fetchServerData() {
+  try {
+    let res = await fetch(serverUrl + '/data');
+    appData = await res.json();
+  } catch (e) {
+    console.warn('Server offline');
+  }
+}
+
+function openLoginModal() {
+  let body = $('#buyBody');
+  $('#tBuy').textContent = 'StudySync Login & Role Selection';
+  body.textContent = '';
+
+  let form = el('form');
+  form.innerHTML = `
+    <div class="field" style="margin-bottom:0.9rem;">
+      <label>Username</label>
+      <input type="text" id="loginUser" required autocomplete="username" />
+    </div>
+    <div class="field" style="margin-bottom:0.9rem;">
+      <label>Password</label>
+      <input type="password" id="loginPass" required autocomplete="current-password" />
+    </div>
+    <div class="field" style="margin-bottom:0.9rem;">
+      <label>Select Role</label>
+      <select id="loginRole" required>
+        <option value="Independent Learner">Independent Learner</option>
+        <option value="Student">Student</option>
+        <option value="Teacher">Teacher</option>
+        <option value="Founder">Founder</option>
+      </select>
+    </div>
+    <div class="d-foot">
+      <button type="button" class="btn ghost" id="cancelLogin">Cancel</button>
+      <button type="submit" class="btn">Login / Register</button>
+    </div>
+  `;
+  body.appendChild(form);
+
+  $('#cancelLogin').addEventListener('click', () => closeM($('#ovBuy')));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    let username = $('#loginUser').value.trim();
+    let password = $('#loginPass').value.trim();
+    let role = $('#loginRole').value;
+
+    try {
+      let res = await fetch(serverUrl + '/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, role })
+      });
+      let data = await res.json();
+      if (data.success) {
+        currentUser = data.user;
+        closeM($('#ovBuy'));
+        toast('Logged in as ' + currentUser.username);
+        await fetchServerData();
+        renderRoleTabs();
+        renderAuth();
+      } else {
+        toast(data.error || 'Login failed');
+      }
+    } catch (err) {
+      toast('Could not connect to server.');
+    }
   });
+
+  openM($('#ovBuy'));
+}
+
+$('#loginBtn').addEventListener('click', openLoginModal);
+
+function renderRoleTabs() {
+  let nav = $('#mainNav');      $$('.role-tab').forEach(n => n.remove());$('#orgTopBtn')?.remove();
+  if (!currentUser) return;
+
+  let courseTab = el('a', 'role-tab', 'Courses');
+  courseTab.href = '#';
+  courseTab.addEventListener('click', (e) => { e.preventDefault(); showView('courses'); });
+  nav.appendChild(courseTab);
+
+  if (currentUser.role === 'Founder') {
+    let orgBtn = el('button', 'btn ghost', 'Create an Organization');
+    orgBtn.id = 'orgTopBtn';
+    orgBtn.style.marginLeft = '1rem';
+    orgBtn.addEventListener('click', openCreateOrgModal);
+    $('#headerActions')?.prepend(orgBtn);
+
+    let classTrack = el('a', 'role-tab', 'Class Tracking');
+    classTrack.href = '#';
+    classTrack.addEventListener('click', (e) => { e.preventDefault(); showView('classTracking'); });
+    nav.appendChild(classTrack);
+
+    let teacherTrack = el('a', 'role-tab', 'Teacher Tracking');
+    teacherTrack.href = '#';
+    teacherTrack.addEventListener('click', (e) => { e.preventDefault(); showView('teacherTracking'); });
+    nav.appendChild(teacherTrack);
+  }
+
+  if (currentUser.role === 'Teacher') {
+    let classTrack = el('a', 'role-tab', 'Class Tracking');
+    classTrack.href = '#';
+    classTrack.addEventListener('click', (e) => { e.preventDefault(); showView('classTracking'); });
+    nav.appendChild(classTrack);
+  }
+}
+
+function openCreateOrgModal() {
+  let body = $('#buyBody');
+  $('#tBuy').textContent = 'Create an Organization';
+  body.textContent = '';
+
+  let form = el('form');
+  form.innerHTML = `
+    <div class="field" style="margin-bottom:0.9rem;">
+      <label>Name of Organization</label>
+      <input type="text" id="orgNameInput" required placeholder="e.g. EduGlobal" />
+    </div>
+    <div class="field" style="margin-bottom:0.9rem;">
+      <label>Organization Type</label>
+      <div style="display:flex; gap:1rem; margin-top:0.5rem;">
+        <button type="button" class="btn org-type-btn" data-type="Private" style="flex:1;">
+          Private
+          <div style="font-size:0.75rem; opacity:0.8;">Only you can invite teachers and request for them to join.</div>
+        </button>
+        <button type="button" class="btn ghost org-type-btn" data-type="Public" style="flex:1;">
+          Public
+          <div style="font-size:0.75rem; opacity:0.8;">Anybody can request to join your organization.</div>
+        </button>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:1rem; margin:1rem 0;">
+      <div id="orgIconBox" style="width:40px; height:40px; background:var(--main); color:var(--on-main); display:flex; align-items:center; justify-content:center; border-radius:50%; font-weight:bold;">?</div>
+      <span>Organization Icon</span>
+    </div>
+    <div class="d-foot">
+      <button type="button" class="btn ghost" id="cancelOrg">Cancel</button>
+      <button type="submit" class="btn">Create Organization</button>
+    </div>
+  `;
+  body.appendChild(form);
+
+  let nameInput = $('#orgNameInput');
+  nameInput.addEventListener('input', () => {
+    let val = nameInput.value.trim();
+    $('#orgIconBox').textContent = val ? val[0].toUpperCase() : '?';
+  });
+
+  $('#cancelOrg').addEventListener('click', () => closeM($('#ovBuy')));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    let name = nameInput.value.trim();
+    let res = await fetch(serverUrl + '/organization', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, type: 'Private', founderUsername: currentUser.username })
+    });
+    let data = await res.json();
+    if (data.success) {
+      currentUser.orgId = data.organization.id;
+      toast('Organization created!');
+      closeM($('#ovBuy'));
+    }
+  });
+
+  openM($('#ovBuy'));
+}
+
+SS.registerView('classTracking', {
+  init: function (r) {
+    r.innerHTML = `<div class="wrap tool-page">
+      <h1>Class Tracking</h1>
+      <button class="btn" id="createClassBtn" style="margin-bottom:1.5rem;">+ Create a Class</button>
+      <div id="classListContainer"></div>
+    </div>`;
+    $('#createClassBtn', r).addEventListener('click', async () => {
+      let className = prompt('Enter Class Name:');
+      if (!className) return;
+      await fetch(serverUrl + '/classes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: className, founderUsername: currentUser.username })
+      });
+      await fetchServerData();
+      VIEWS['classTracking'].onShow();
+    });
+  },
+  onShow: function () {
+    let container = $('#classListContainer', VIEWS['classTracking'].el);
+    container.textContent = '';
+    let classes = appData.classes.filter(c => c.founder === currentUser.username);
+    if (classes.length === 0) {
+      container.appendChild(el('p', 'warn', 'Create a Class, there are currently no classes.'));
+      return;
+    }
+    classes.forEach(cls => {
+      let card = el('div', 'tile');
+      card.style.cursor = 'pointer';
+      card.style.marginBottom = '1rem';
+      card.appendChild(el('h3', null, cls.name));
+      let details = el('div', null);
+      details.hidden = true;
+      if (!cls.students || cls.students.length === 0) {
+        details.appendChild(el('p', null, 'No students!'));
+      }
+      card.appendChild(details);
+      card.addEventListener('click', () => { details.hidden = !details.hidden; });
+      container.appendChild(card);
+    });
+  }
+});
+
+SS.registerView('courses', {
+  init: function (r) {
+    r.innerHTML = `<div class="wrap tool-page">
+      <h1>Courses</h1>
+      ${currentUser && (currentUser.role === 'Founder' || currentUser.role === 'Teacher') ? `
+        <div class="tile" style="margin-bottom:2rem;">
+          <h3>Create Course</h3>
+          <form id="courseForm" style="display:flex; flex-direction:column; gap:1rem; margin-top:1rem;">
+            <input type="text" id="cTitle" placeholder="Course Title" required />
+            <textarea id="cDesc" placeholder="Course Information" rows="3" required></textarea>
+            <input type="text" id="cVideos" placeholder="Video URLs (comma separated)" />
+            <input type="text" id="cImages" placeholder="Image URLs (comma separated)" />
+            <button type="submit" class="btn">Publish</button>
+          </form>
+        </div>
+      ` : ''}
+      <h2>Preset Courses</h2>
+      <p class="sub">Preset courses are blank for now.</p>
+      <h2>Custom Courses</h2>
+      <div id="customCoursesList"></div>
+    </div>`;
+
+    let form = $('#courseForm', r);
+    if (form) {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await fetch(serverUrl + '/courses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: $('#cTitle').value,
+            information: $('#cDesc').value,
+            videos: $('#cVideos').value.split(',').map(s => s.trim()).filter(Boolean),
+            images: $('#cImages').value.split(',').map(s => s.trim()).filter(Boolean),
+            creator: currentUser.username
+          })
+        });
+        toast('Course created!');
+        await fetchServerData();
+        VIEWS['courses'].onShow();
+        form.reset();
+      });
+    }
+  },
+  onShow: function () {
+    let list = $('#customCoursesList', VIEWS['courses'].el);
+    if (!list) return;
+    list.textContent = '';
+    appData.courses.forEach(c => {
+      let box = el('article', 'tile');
+      box.appendChild(el('h3', null, c.title));
+      box.appendChild(el('p', null, c.information));
+      list.appendChild(box);
+    });
+  }
+});
   $('#profileBtn').addEventListener('click', function (e) { openM($('#ovProfile'), e.currentTarget); });
   $('#logoutBtn').addEventListener('click', function () {
     user = null; LS.del('ss_user'); closeM($('#ovProfile')); renderAuth();
